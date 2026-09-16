@@ -18,7 +18,7 @@ if (!TOKEN) { console.error("ERRO: defina o secret META_TOKEN."); process.exit(1
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function getAll(path, params, retries = 2) {
+async function getAll(path, params, retries = 3) {
   const url = new URL(`${API}/${path}`);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   url.searchParams.set("access_token", TOKEN);
@@ -30,8 +30,9 @@ async function getAll(path, params, retries = 2) {
       const r = await fetch(next);
       j = await r.json();
       if (j.error && attempt < retries) {
-        console.log(`    retry ${attempt + 1}/${retries} (${j.error.message}) — aguardando 5s...`);
-        await sleep(5000);
+        const wait = 10000 * (attempt + 1);
+        console.log(`    retry ${attempt + 1}/${retries} (${j.error.message}) — aguardando ${wait/1000}s...`);
+        await sleep(wait);
         continue;
       }
       break;
@@ -153,8 +154,8 @@ async function main() {
   const adById   = Object.fromEntries(adMeta.map(a => [a.id, a]));
   const adsetName = Object.fromEntries(adsetMeta.map(s => [s.id, s.name]));
 
-  const chunks = dateChunks(SINCE, until, 30);
-  console.log(`Buscando insights em ${chunks.length} blocos de 30 dias (${SINCE} → ${until})...`);
+  const chunks = dateChunks(SINCE, until, 15);
+  console.log(`Buscando insights em ${chunks.length} blocos de 15 dias (${SINCE} → ${until})...`);
   let rows = [];
   for (const [cs, ce] of chunks) {
     console.log(`  bloco ${cs} → ${ce}...`);
