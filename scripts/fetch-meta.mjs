@@ -45,9 +45,9 @@ function pick(actions, types) {
 }
 
 const IF = [
-  "ad_id", "ad_name", "adset_id", "campaign_id",
-  "spend", "impressions", "reach", "clicks",
-  "actions",
+  "ad_id", "adset_id", "campaign_id",
+  "spend", "impressions", "reach", "inline_link_clicks",
+  "actions", "conversions",
   "video_thruplay_watched_actions",
   "video_p25_watched_actions", "video_p50_watched_actions",
   "video_p75_watched_actions", "video_p95_watched_actions",
@@ -56,6 +56,8 @@ const IF = [
 
 function toRow(r) {
   const a = r.actions || [];
+  const cv = r.conversions || [];
+  const all = a.concat(cv.filter(c => !a.some(x => x.action_type === c.action_type)));
   const o = {
     d: r.date_start,
     a: r.ad_id,
@@ -66,16 +68,16 @@ function toRow(r) {
   o.s  = +(+r.spend).toFixed(2);
   o.i  = num(r.impressions);
   o.rc = num(r.reach);
-  o.ck = num(r.clicks);
+  o.ck = num(r.inline_link_clicks);
 
-  const le = pick(a, ["lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"]);
-  const ql = pick(a, ["offsite_conversion.custom.lead_quali", "lead_quali", "offsite_conversion.fb_pixel_custom.lead_quali"]);
-  const pu = pick(a, ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]);
-  const co = pick(a, ["omni_initiated_checkout", "initiate_checkout"]);
-  const lc = pick(a, ["link_click"]);
-  const pv = pick(a, ["omni_landing_page_view", "landing_page_view"]);
-  const ig = pick(a, ["onsite_conversion.ig_profile_visit", "onsite_conversion.ig_profile_engagement"]);
-  const fo = pick(a, ["onsite_conversion.follow", "onsite_conversion.page_follow", "follow", "like"]);
+  const le = pick(all, ["lead", "offsite_conversion.fb_pixel_lead", "onsite_conversion.lead_grouped"]);
+  const ql = pick(all, ["offsite_conversion.fb_pixel_custom.lead_quali", "offsite_conversion.custom.lead_quali", "lead_quali"]);
+  const pu = pick(all, ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]);
+  const co = pick(all, ["omni_initiated_checkout", "initiate_checkout"]);
+  const lc = pick(all, ["link_click"]);
+  const pv = pick(all, ["omni_landing_page_view", "landing_page_view"]);
+  const ig = pick(all, ["onsite_conversion.ig_profile_visit", "onsite_conversion.ig_profile_engagement"]);
+  const fo = pick(all, ["onsite_conversion.follow", "onsite_conversion.page_follow", "follow", "like"]);
 
   const tp = sumArr(r.video_thruplay_watched_actions);
   const vh = pick(a, ["video_view"]);
@@ -156,7 +158,7 @@ async function main() {
   }
 
   const daily = rows
-    .filter(r => parseFloat(r.spend) > 0)
+    .filter(r => parseFloat(r.spend) > 0 || parseInt(r.impressions) > 0)
     .map(toRow)
     .sort((x, y) => x.d < y.d ? -1 : x.d > y.d ? 1 : 0);
 
