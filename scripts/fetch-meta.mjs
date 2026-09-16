@@ -46,7 +46,7 @@ function pick(actions, types) {
 
 const IF = [
   "ad_id", "adset_id", "campaign_id",
-  "spend", "impressions", "reach", "inline_link_clicks",
+  "spend", "impressions", "reach",
   "actions",
   "video_thruplay_watched_actions",
   "video_p25_watched_actions", "video_p50_watched_actions",
@@ -66,13 +66,13 @@ function toRow(r) {
   o.s  = +(+r.spend).toFixed(2);
   o.i  = num(r.impressions);
   o.rc = num(r.reach);
-  o.ck = num(r.inline_link_clicks);
 
   const le = pick(all, ["lead", "offsite_conversion.fb_pixel_lead", "onsite_conversion.lead_grouped"]);
   const ql = pick(all, ["offsite_conversion.fb_pixel_custom.lead_quali", "offsite_conversion.custom.lead_quali", "lead_quali"]);
   const pu = pick(all, ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]);
   const co = pick(all, ["omni_initiated_checkout", "initiate_checkout"]);
   const lc = pick(all, ["link_click"]);
+  o.ck = lc;
   const pv = pick(all, ["omni_landing_page_view", "landing_page_view"]);
   const ig = pick(all, ["onsite_conversion.ig_profile_visit", "onsite_conversion.ig_profile_engagement"]);
   const fo = pick(all, ["onsite_conversion.follow", "onsite_conversion.page_follow", "follow", "like"]);
