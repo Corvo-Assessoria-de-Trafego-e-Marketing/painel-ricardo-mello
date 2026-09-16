@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 const TOKEN   = process.env.META_TOKEN;
 const ACCOUNT = process.env.AD_ACCOUNT_ID || "2895948854126435";
 const SINCE   = process.env.SINCE || "2026-04-01";
-const API     = "https://graph.facebook.com/v21.0";
+const API     = "https://graph.facebook.com/v20.0";
 const ROOT    = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT     = join(ROOT, "data.json");
 const THUMBDIR = join(ROOT, "thumbs");
@@ -47,7 +47,7 @@ function pick(actions, types) {
 const IF = [
   "ad_id", "adset_id", "campaign_id",
   "spend", "impressions", "reach",
-  "actions",
+  "actions", "conversions",
   "video_thruplay_watched_actions",
   "video_p25_watched_actions", "video_p50_watched_actions",
   "video_p75_watched_actions", "video_p95_watched_actions",
@@ -55,7 +55,9 @@ const IF = [
 ].join(",");
 
 function toRow(r) {
-  const all = r.actions || [];
+  const a = r.actions || [];
+  const cv = r.conversions || [];
+  const all = a.concat(cv.filter(c => !a.some(x => x.action_type === c.action_type)));
   const o = {
     d: r.date_start,
     a: r.ad_id,
