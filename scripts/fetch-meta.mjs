@@ -108,10 +108,23 @@ function toRow(r) {
   return o;
 }
 
+function dateChunks(since, until, days = 30) {
+  const chunks = [];
+  let s = new Date(since + "T00:00:00Z");
+  const end = new Date(until + "T00:00:00Z");
+  while (s <= end) {
+    const e = new Date(s); e.setUTCDate(e.getUTCDate() + days - 1);
+    if (e > end) e.setTime(end.getTime());
+    chunks.push([s.toISOString().slice(0, 10), e.toISOString().slice(0, 10)]);
+    s = new Date(e); s.setUTCDate(s.getUTCDate() + 1);
+  }
+  return chunks;
+}
+
 async function main() {
   const until = new Date().toISOString().slice(0, 10);
-  const time_range = JSON.stringify({ since: SINCE, until });
 
+  console.log(`Buscando metadados (campanhas, anúncios, conjuntos)...`);
   const campMeta = await getAll(`act_${ACCOUNT}/campaigns`, {
     fields: "id,name,objective,status,effective_status",
   });
@@ -121,17 +134,26 @@ async function main() {
   const adsetMeta = await getAll(`act_${ACCOUNT}/adsets`, {
     fields: "id,name",
   });
+  console.log(`  ${campMeta.length} campanhas, ${adMeta.length} anúncios, ${adsetMeta.length} conjuntos`);
 
   const campById = Object.fromEntries(campMeta.map(c => [c.id, c]));
   const adById   = Object.fromEntries(adMeta.map(a => [a.id, a]));
   const adsetName = Object.fromEntries(adsetMeta.map(s => [s.id, s.name]));
 
-  const rows = await getAll(`act_${ACCOUNT}/insights`, {
-    level: "ad",
-    time_range,
-    time_increment: "1",
-    fields: IF,
-  });
+  const chunks = dateChunks(SINCE, until, 30);
+  console.log(`Buscando insights em ${chunks.length} blocos de 30 dias (${SINCE} → ${until})...`);
+  let rows = [];
+  for (const [cs, ce] of chunks) {
+    console.log(`  bloco ${cs} → ${ce}...`);
+    const chunk = await getAll(`act_${ACCOUNT}/insights`, {
+      level: "ad",
+      time_range: JSON.stringify({ since: cs, until: ce }),
+      time_increment: "1",
+      fields: IF,
+    });
+    rows = rows.concat(chunk);
+    console.log(`    ${chunk.length} linhas (total acumulado: ${rows.length})`);
+  }
 
   const daily = rows
     .filter(r => parseFloat(r.spend) > 0)
