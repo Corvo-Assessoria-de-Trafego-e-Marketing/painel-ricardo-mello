@@ -47,7 +47,7 @@ function pick(actions, types) {
 const IF = [
   "ad_id", "adset_id", "campaign_id",
   "spend", "impressions", "reach", "inline_link_clicks",
-  "actions", "conversions",
+  "actions",
   "video_thruplay_watched_actions",
   "video_p25_watched_actions", "video_p50_watched_actions",
   "video_p75_watched_actions", "video_p95_watched_actions",
@@ -55,9 +55,7 @@ const IF = [
 ].join(",");
 
 function toRow(r) {
-  const a = r.actions || [];
-  const cv = r.conversions || [];
-  const all = a.concat(cv.filter(c => !a.some(x => x.action_type === c.action_type)));
+  const all = r.actions || [];
   const o = {
     d: r.date_start,
     a: r.ad_id,
@@ -156,6 +154,17 @@ async function main() {
     rows = rows.concat(chunk);
     console.log(`    ${chunk.length} linhas (total acumulado: ${rows.length})`);
   }
+
+  const qlTypes = new Set();
+  for (const r of rows) {
+    if (!r.actions) continue;
+    for (const act of r.actions) {
+      if (act.action_type && act.action_type.includes("lead_quali")) qlTypes.add(act.action_type);
+      if (act.action_type && act.action_type.includes("custom")) qlTypes.add(act.action_type);
+    }
+  }
+  if (qlTypes.size) console.log(`  action_types com lead_quali/custom: ${[...qlTypes].join(", ")}`);
+  else console.log(`  NENHUM action_type com lead_quali ou custom encontrado nas actions`);
 
   const daily = rows
     .filter(r => parseFloat(r.spend) > 0 || parseInt(r.impressions) > 0)
