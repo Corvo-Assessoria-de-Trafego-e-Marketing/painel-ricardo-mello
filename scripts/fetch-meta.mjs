@@ -1,18 +1,18 @@
-// fetch-meta.mjs — puxa a Meta Marketing API e reescreve ../data.json (multi-período).
+// fetch-meta.mjs — puxa a Meta Marketing API e reescreve ../data.json (dados diários por anúncio).
 // Rodado pelo GitHub Actions de hora em hora. Node 20+ (fetch global).
-// Env: META_TOKEN (obrigatória), AD_ACCOUNT_ID (opcional).
+// Env: META_TOKEN (obrigatória), AD_ACCOUNT_ID (opcional), SINCE (opcional).
 
 import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-const TOKEN = process.env.META_TOKEN;
+const TOKEN   = process.env.META_TOKEN;
 const ACCOUNT = process.env.AD_ACCOUNT_ID || "2895948854126435";
-const API = "https://graph.facebook.com/v21.0";
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = join(ROOT, "data.json");
+const SINCE   = process.env.SINCE || "2026-04-01";
+const API     = "https://graph.facebook.com/v21.0";
+const ROOT    = join(dirname(fileURLToPath(import.meta.url)), "..");
+const OUT     = join(ROOT, "data.json");
 const THUMBDIR = join(ROOT, "thumbs");
-const PRESETS = ["today", "yesterday", "last_7d", "last_30d", "last_90d"];
 
 if (!TOKEN) { console.error("ERRO: defina o secret META_TOKEN."); process.exit(1); }
 
@@ -20,105 +20,185 @@ async function getAll(path, params) {
   const url = new URL(`${API}/${path}`);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   url.searchParams.set("access_token", TOKEN);
-  url.searchParams.set("limit", params.limit || "300");
-  let out = [], next = url.toString();
-  while (next) {
+  if (!params.limit) url.searchParams.set("limit", "500");
+  let out = [], next = url.toString(), guard = 0;
+  while (next && guard++ < 200) {
     const r = await fetch(next);
     const j = await r.json();
     if (j.error) throw new Error(`${path}: ${j.error.message}`);
     out = out.concat(j.data || []);
-    next = j.paging && j.paging.next ? j.paging.next : null;
+    next = j.paging?.next || null;
   }
   return out;
 }
-const num = v => (v == null ? 0 : Math.round(parseFloat(v)));
-function pick(actions, types) {
-  if (!Array.isArray(actions)) return 0;
-  for (const t of types) { const h = actions.find(a => a.action_type === t); if (h) return num(h.value); }
-  return 0;
-}
+
+const num = v => (v == null ? 0 : Math.round(parseFloat(v) || 0));
 const sumArr = a => Array.isArray(a) ? a.reduce((s, x) => s + num(x.value), 0) : num(a);
 
-const IF = "ad_id,ad_name,adset_id,campaign_id,spend,impressions,reach,clicks,actions,video_thruplay_watched_actions,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions";
-
-function toAct(r) {
-  const a = r.actions || [];
-  const act = {
-    pu: pick(a, ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]),
-    le: pick(a, ["lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"]),
-    ck: pick(a, ["omni_initiated_checkout", "initiate_checkout"]),
-    ig: pick(a, ["onsite_conversion.ig_profile_visit", "onsite_conversion.ig_profile_engagement"]),
-    fo: pick(a, ["onsite_conversion.follow", "onsite_conversion.page_follow", "follow", "like"]),
-    lc: pick(a, ["link_click"]),
-    pv: pick(a, ["omni_landing_page_view", "landing_page_view"]),
-    tp: sumArr(r.video_thruplay_watched_actions),
-  };
-  Object.keys(act).forEach(k => { if (!act[k]) delete act[k]; });
-  return act;
+function pick(actions, types) {
+  if (!Array.isArray(actions)) return 0;
+  for (const t of types) {
+    const hit = actions.find(a => a.action_type === t);
+    if (hit) return num(hit.value);
+  }
+  return 0;
 }
-function toVid(r) {
-  const h = pick(r.actions, ["video_view"]); // reproduções de 3s
+
+const IF = [
+  "ad_id", "ad_name", "adset_id", "campaign_id",
+  "spend", "impressions", "reach", "clicks",
+  "actions",
+  "video_thruplay_watched_actions",
+  "video_p25_watched_actions", "video_p50_watched_actions",
+  "video_p75_watched_actions", "video_p95_watched_actions",
+  "video_play_actions",
+].join(",");
+
+function toRow(r) {
+  const a = r.actions || [];
+  const o = {
+    d: r.date_start,
+    a: r.ad_id,
+    c: r.campaign_id,
+  };
+  if (r.adset_id) o.as = r.adset_id;
+
+  o.s  = +(+r.spend).toFixed(2);
+  o.i  = num(r.impressions);
+  o.rc = num(r.reach);
+  o.ck = num(r.clicks);
+
+  const le = pick(a, ["lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"]);
+  const ql = pick(a, ["offsite_conversion.custom.lead_quali", "lead_quali", "offsite_conversion.fb_pixel_custom.lead_quali"]);
+  const pu = pick(a, ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]);
+  const co = pick(a, ["omni_initiated_checkout", "initiate_checkout"]);
+  const lc = pick(a, ["link_click"]);
+  const pv = pick(a, ["omni_landing_page_view", "landing_page_view"]);
+  const ig = pick(a, ["onsite_conversion.ig_profile_visit", "onsite_conversion.ig_profile_engagement"]);
+  const fo = pick(a, ["onsite_conversion.follow", "onsite_conversion.page_follow", "follow", "like"]);
+
   const tp = sumArr(r.video_thruplay_watched_actions);
-  if (!h && !tp) return null;
-  return { h, tp,
-    q25: sumArr(r.video_p25_watched_actions), q50: sumArr(r.video_p50_watched_actions),
-    q75: sumArr(r.video_p75_watched_actions), q95: sumArr(r.video_p95_watched_actions) };
+  const vh = pick(a, ["video_view"]);
+
+  if (le) o.le = le;
+  if (ql) o.ql = ql;
+  if (pu) o.pu = pu;
+  if (co) o.co = co;
+  if (lc) o.lc = lc;
+  if (pv) o.pv = pv;
+  if (ig) o.ig = ig;
+  if (fo) o.fo = fo;
+  if (tp) o.tp = tp;
+
+  const q25 = sumArr(r.video_p25_watched_actions);
+  const q50 = sumArr(r.video_p50_watched_actions);
+  const q75 = sumArr(r.video_p75_watched_actions);
+  const q95 = sumArr(r.video_p95_watched_actions);
+  if (tp || vh) {
+    const v = {};
+    if (vh) v.h = vh;
+    if (tp) v.tp = tp;
+    if (q25) v.q25 = q25;
+    if (q50) v.q50 = q50;
+    if (q75) v.q75 = q75;
+    if (q95) v.q95 = q95;
+    o.vid = v;
+  }
+
+  return o;
 }
 
 async function main() {
-  const campMeta = await getAll(`act_${ACCOUNT}/campaigns`, { fields: "id,name,objective,status,effective_status" });
-  const adMeta = await getAll(`act_${ACCOUNT}/ads`, { fields: "id,effective_status,creative{id}" });
-  const adsetMeta = await getAll(`act_${ACCOUNT}/adsets`, { fields: "id,name" });
-  const statusOf = Object.fromEntries(adMeta.map(a => [a.id, a.effective_status === "ACTIVE" ? "ACTIVE" : "PAUSED"]));
-  const creativeOf = Object.fromEntries(adMeta.filter(a => a.creative).map(a => [a.id, a.creative.id]));
+  const until = new Date().toISOString().slice(0, 10);
+  const time_range = JSON.stringify({ since: SINCE, until });
+
+  const campMeta = await getAll(`act_${ACCOUNT}/campaigns`, {
+    fields: "id,name,objective,status,effective_status",
+  });
+  const adMeta = await getAll(`act_${ACCOUNT}/ads`, {
+    fields: "id,name,campaign_id,adset_id,effective_status,creative{id}",
+  });
+  const adsetMeta = await getAll(`act_${ACCOUNT}/adsets`, {
+    fields: "id,name",
+  });
+
   const campById = Object.fromEntries(campMeta.map(c => [c.id, c]));
+  const adById   = Object.fromEntries(adMeta.map(a => [a.id, a]));
   const adsetName = Object.fromEntries(adsetMeta.map(s => [s.id, s.name]));
 
-  const periods = {};
-  const usedCamps = new Set(), usedAdsets = new Set(), usedAds = new Set();
-  for (const preset of PRESETS) {
-    const rows = await getAll(`act_${ACCOUNT}/insights`, { level: "ad", date_preset: preset, fields: IF });
-    const list = rows.filter(r => parseFloat(r.spend) > 0).map(r => {
-      usedCamps.add(r.campaign_id); usedAds.add(r.ad_id); if (r.adset_id) usedAdsets.add(r.adset_id);
-      const ad = { id: r.ad_id, name: r.ad_name, campaign_id: r.campaign_id, status: statusOf[r.ad_id] || "PAUSED",
-        spend: +(+r.spend).toFixed(2), impr: num(r.impressions), reach: num(r.reach), clicks: num(r.clicks), act: toAct(r) };
-      if (r.adset_id) ad.adset_id = r.adset_id;
-      const v = toVid(r); if (v) ad.vid = v;
-      return ad;
-    }).sort((a, b) => b.spend - a.spend);
-    periods[preset] = { ads: list };
-  }
+  const rows = await getAll(`act_${ACCOUNT}/insights`, {
+    level: "ad",
+    time_range,
+    time_increment: "1",
+    fields: IF,
+  });
 
-  const dailyRows = await getAll(`act_${ACCOUNT}/insights`, { level: "account", time_increment: "1", date_preset: "last_90d", fields: "spend,impressions,clicks,reach" });
-  const daily = dailyRows.map(r => ({ d: r.date_start, spend: +(+r.spend).toFixed(2), impr: num(r.impressions), clicks: num(r.clicks), reach: num(r.reach) }));
+  const daily = rows
+    .filter(r => parseFloat(r.spend) > 0)
+    .map(toRow)
+    .sort((x, y) => x.d < y.d ? -1 : x.d > y.d ? 1 : 0);
 
-  // capas dos criativos: baixa 400px p/ thumbs/<ad_id>.jpg (pula se já existe)
-  let baixadas = 0;
+  if (!daily.length) throw new Error("nenhuma linha com gasto — confira o token e o AD_ACCOUNT_ID");
+
+  const usedAds    = [...new Set(daily.map(r => r.a))];
+  const usedCamps  = [...new Set(daily.map(r => r.c))];
+  const usedAdsets = [...new Set(daily.filter(r => r.as).map(r => r.as))];
+
+  mkdirSync(THUMBDIR, { recursive: true });
   const imgMap = {};
+  let baixadas = 0;
   for (const adId of usedAds) {
     const file = join(THUMBDIR, adId + ".jpg"), rel = "thumbs/" + adId + ".jpg";
     if (existsSync(file)) { imgMap[adId] = rel; continue; }
-    const cid = creativeOf[adId]; if (!cid) continue;
+    const cid = adById[adId]?.creative?.id;
+    if (!cid) continue;
     try {
       const j = await (await fetch(`${API}/${cid}?fields=thumbnail_url&thumbnail_width=400&thumbnail_height=400&access_token=${TOKEN}`)).json();
       if (!j.thumbnail_url) continue;
-      const ir = await fetch(j.thumbnail_url); if (!ir.ok) continue;
-      mkdirSync(THUMBDIR, { recursive: true });
+      const ir = await fetch(j.thumbnail_url);
+      if (!ir.ok) continue;
       writeFileSync(file, Buffer.from(await ir.arrayBuffer()));
       imgMap[adId] = rel; baixadas++;
     } catch { /* segue sem capa */ }
   }
-  for (const p of PRESETS) for (const ad of periods[p].ads) if (imgMap[ad.id]) ad.img = imgMap[ad.id];
 
-  const campaigns = [...usedCamps].filter(id => campById[id]).map(id => ({ id, name: campById[id].name, objective: campById[id].objective || "" }));
-  const adsets = [...usedAdsets].map(id => ({ id, name: adsetName[id] || id }));
+  const campaigns = usedCamps.filter(id => campById[id]).map(id => ({
+    id, name: campById[id].name, objective: campById[id].objective || "",
+  }));
+  const adsets = usedAdsets.map(id => ({ id, name: adsetName[id] || id }));
+  const ads = usedAds.map(id => {
+    const a = adById[id] || {};
+    const o = { id, name: a.name || id, campaign_id: a.campaign_id || daily.find(r => r.a === id).c, status: a.effective_status || "PAUSED" };
+    if (a.adset_id) o.adset_id = a.adset_id;
+    if (imgMap[id]) o.img = imgMap[id];
+    return o;
+  });
 
+  const dates = daily.map(r => r.d);
   const data = {
-    meta: { account_id: ACCOUNT, account_name: "EXPONENTIAL NOVO 2025",
-      client: "Ricardo Mello", currency: "BRL", tz: "America/Sao_Paulo", updated_at: new Date().toISOString(), seed: false, default_period: "last_30d" },
-    campaigns, adsets, periods, daily,
+    meta: {
+      account_id: ACCOUNT,
+      account_name: "EXPONENTIAL NOVO 2025",
+      client: "Ricardo Mello",
+      currency: "BRL",
+      tz: "America/Sao_Paulo",
+      updated_at: new Date().toISOString(),
+      seed: false,
+      first_date: dates[0],
+      last_date: dates[dates.length - 1],
+      default_period: "last_30d",
+    },
+    campaigns, adsets, ads, daily,
   };
+
   writeFileSync(OUT, JSON.stringify(data) + "\n");
-  console.log("OK", PRESETS.map(p => p + "=" + periods[p].ads.length).join(" "), "| campaigns", campaigns.length, "| adsets", adsets.length, "| daily", daily.length);
+
+  const tot = daily.reduce((s, r) => s + r.s, 0);
+  const ql  = daily.reduce((s, r) => s + (r.ql || 0), 0);
+  const le  = daily.reduce((s, r) => s + (r.le || 0), 0);
+  console.log(`OK  linhas=${daily.length}  anúncios=${ads.length}  campanhas=${campaigns.length}  capas novas=${baixadas}`);
+  console.log(`    período ${data.meta.first_date} → ${data.meta.last_date}  investido R$${tot.toFixed(2)}`);
+  console.log(`    leads=${le}  lead_quali=${ql}`);
 }
+
 main().catch(e => { console.error("FALHA:", e.message); process.exit(1); });
