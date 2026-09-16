@@ -16,15 +16,26 @@ const THUMBDIR = join(ROOT, "thumbs");
 
 if (!TOKEN) { console.error("ERRO: defina o secret META_TOKEN."); process.exit(1); }
 
-async function getAll(path, params) {
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function getAll(path, params, retries = 2) {
   const url = new URL(`${API}/${path}`);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   url.searchParams.set("access_token", TOKEN);
   if (!params.limit) url.searchParams.set("limit", "500");
   let out = [], next = url.toString(), guard = 0;
   while (next && guard++ < 200) {
-    const r = await fetch(next);
-    const j = await r.json();
+    let j;
+    for (let attempt = 0; ; attempt++) {
+      const r = await fetch(next);
+      j = await r.json();
+      if (j.error && attempt < retries) {
+        console.log(`    retry ${attempt + 1}/${retries} (${j.error.message}) — aguardando 5s...`);
+        await sleep(5000);
+        continue;
+      }
+      break;
+    }
     if (j.error) throw new Error(`${path}: ${j.error.message}`);
     out = out.concat(j.data || []);
     next = j.paging?.next || null;
@@ -155,6 +166,7 @@ async function main() {
     });
     rows = rows.concat(chunk);
     console.log(`    ${chunk.length} linhas (total acumulado: ${rows.length})`);
+    if (cs !== chunks[chunks.length - 1][0]) await sleep(2000);
   }
 
   const qlTypes = new Set();
