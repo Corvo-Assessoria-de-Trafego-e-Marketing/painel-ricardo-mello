@@ -135,6 +135,29 @@ function dateChunks(since, until, days = 30) {
   return chunks;
 }
 
+/* link "Ver anúncio" de cada criativo: a pré-visualização compartilhável da Meta
+   (abre sem login, com vídeo/imagem e copy — vale também para anúncio que não
+   existe como post no perfil). Sem ela, cai no post do Facebook. Pedido à parte
+   e protegido: se a Meta recusar, o painel segue igual, só sem o botão. */
+async function linksDosAnuncios(adIds) {
+  const out = {};
+  for (let i = 0; i < adIds.length; i += 50) {
+    const ids = adIds.slice(i, i + 50).join(",");
+    try {
+      const j = await (await fetch(`${API}/?ids=${ids}&fields=preview_shareable_link,creative{effective_object_story_id}&access_token=${TOKEN}`)).json();
+      if (j.error) throw new Error(j.error.message);
+      for (const [id, a] of Object.entries(j)) {
+        const post = a.creative?.effective_object_story_id;
+        const link = a.preview_shareable_link || (post ? `https://www.facebook.com/${post}` : null);
+        if (link) out[id] = link;
+      }
+    } catch (e) {
+      console.warn(`    aviso: links dos anúncios não vieram (${e.message}) — painel segue sem o botão`);
+    }
+  }
+  return out;
+}
+
 async function main() {
   const until = new Date().toISOString().slice(0, 10);
 
@@ -210,6 +233,8 @@ async function main() {
     } catch { /* segue sem capa */ }
   }
 
+  const linkMap = await linksDosAnuncios(usedAds);
+
   const campaigns = usedCamps.filter(id => campById[id]).map(id => ({
     id, name: campById[id].name, objective: campById[id].objective || "",
   }));
@@ -219,6 +244,7 @@ async function main() {
     const o = { id, name: a.name || id, campaign_id: a.campaign_id || daily.find(r => r.a === id).c, status: a.effective_status || "PAUSED" };
     if (a.adset_id) o.adset_id = a.adset_id;
     if (imgMap[id]) o.img = imgMap[id];
+    if (linkMap[id]) o.link = linkMap[id];
     return o;
   });
 
@@ -244,7 +270,7 @@ async function main() {
   const tot = daily.reduce((s, r) => s + r.s, 0);
   const ql  = daily.reduce((s, r) => s + (r.ql || 0), 0);
   const le  = daily.reduce((s, r) => s + (r.le || 0), 0);
-  console.log(`OK  linhas=${daily.length}  anúncios=${ads.length}  campanhas=${campaigns.length}  capas novas=${baixadas}`);
+  console.log(`OK  linhas=${daily.length}  anúncios=${ads.length}  campanhas=${campaigns.length}  capas novas=${baixadas}  com link=${Object.keys(linkMap).length}`);
   console.log(`    período ${data.meta.first_date} → ${data.meta.last_date}  investido R$${tot.toFixed(2)}`);
   console.log(`    leads=${le}  lead_quali=${ql}`);
 }

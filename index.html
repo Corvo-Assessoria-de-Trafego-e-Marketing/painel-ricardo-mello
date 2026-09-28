@@ -253,6 +253,10 @@
   .gbadges{position:absolute;top:8px;left:8px;right:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:6px;}
   .gbadges .st{backdrop-filter:blur(4px);}
   .gbody{padding:11px 13px 13px;}
+  /* link "Ver anúncio" (pré-visualização da Meta) */
+  .adlink{display:inline-flex;align-items:center;gap:3px;margin-top:5px;padding:2px 8px;border:1px solid var(--border);border-radius:7px;font-size:11px;font-weight:600;color:var(--accent-ink);text-decoration:none;white-space:nowrap;}
+  .adlink:hover{border-color:var(--accent);background:var(--accent-wash);}
+  a.gthumb{display:block;}
   .gname{font-family:var(--font-mono);font-size:11.5px;font-weight:600;letter-spacing:-.02em;line-height:1.28;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:30px;}
   .gcity{font-size:10px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .gmet{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;margin-top:11px;}
@@ -440,7 +444,7 @@ function adMetrics(a){
 }
 function ads(){
   const rows=DATA.daily.filter(r=>r.d>=state.from&&r.d<=state.to),byAd={};
-  for(const r of rows){if(!byAd[r.a]){const inf=ADINFO[r.a]||{};byAd[r.a]={ad_id:r.a,campaign_id:r.c,adset_id:r.as||inf.adset_id,name:inf.name||r.a,status:inf.status||"PAUSED",img:inf.img,spend:0,impr:0,reach:0,clicks:0,le:0,ql:0,pu:0,co:0,lc:0,pv:0,ig:0,fo:0,tp:0,vid:null};}
+  for(const r of rows){if(!byAd[r.a]){const inf=ADINFO[r.a]||{};byAd[r.a]={ad_id:r.a,campaign_id:r.c,adset_id:r.as||inf.adset_id,name:inf.name||r.a,status:inf.status||"PAUSED",img:inf.img,link:inf.link,spend:0,impr:0,reach:0,clicks:0,le:0,ql:0,pu:0,co:0,lc:0,pv:0,ig:0,fo:0,tp:0,vid:null};}
   const o=byAd[r.a];o.spend+=r.s;o.impr+=r.i;o.reach+=r.rc;o.clicks+=r.ck;o.le+=r.le||0;o.ql+=r.ql||0;o.pu+=r.pu||0;o.co+=r.co||0;o.lc+=r.lc||0;o.pv+=r.pv||0;o.ig+=r.ig||0;o.fo+=r.fo||0;o.tp+=r.tp||0;
   if(r.vid){if(!o.vid)o.vid={h:0,tp:0,q25:0,q50:0,q75:0,q95:0};o.vid.h+=r.vid.h||0;o.vid.tp+=r.vid.tp||0;o.vid.q25+=r.vid.q25||0;o.vid.q50+=r.vid.q50||0;o.vid.q75+=r.vid.q75||0;o.vid.q95+=r.vid.q95||0;}}
   return Object.values(byAd).map(adMetrics);
@@ -487,7 +491,7 @@ function perLabel(){if(state.preset){const p=PRESETS.find(x=>x[0]===state.preset
 function relTime(dt){const s=Math.max(0,(Date.now()-dt.getTime())/1000);if(s<90)return "agora";const m=Math.round(s/60);if(m<60)return "há "+m+" min";const h=Math.floor(m/60);if(h<48)return "há "+h+" h";return "há "+Math.round(h/24)+" d";}
 function boot(d){
   DATA=d; d.campaigns.forEach(c=>CMETA[c.id]=c); (d.adsets||[]).forEach(a=>ADMAP[a.id]=a.name);
-  (d.ads||[]).forEach(a=>{ADINFO[a.id]={name:a.name,campaign_id:a.campaign_id,adset_id:a.adset_id,status:a.status,img:a.img};});
+  (d.ads||[]).forEach(a=>{ADINFO[a.id]={name:a.name,campaign_id:a.campaign_id,adset_id:a.adset_id,status:a.status,img:a.img,link:a.link};});
   if(!d.meta.first_date||!d.meta.last_date){const ds=d.daily.map(r=>r.d).sort();d.meta.first_date=ds[0];d.meta.last_date=ds[ds.length-1];}
   state.preset=d.meta.default_period||"last_30d";
   const [f,t]=presetRange(state.preset);state.from=f;state.to=t;
@@ -673,14 +677,17 @@ function sortRows(rows,st){
     if(k==="status")return st.d*((a._active?1:0)-(b._active?1:0));
     return st.d*(((a[k]==null?-1:a[k]))-((b[k]==null?-1:b[k])));});
 }
+// botão para abrir o anúncio (vídeo/imagem + copy) na pré-visualização da Meta
+const qa=s=>String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;");
+const adLink=c=>c.link?`<a class="adlink" href="${qa(c.link)}" target="_blank" rel="noopener">Ver anúncio ↗</a>`:"";
 function renderGallery(rows,best){
   const g=document.getElementById("gallery");
   g.innerHTML=`<div class="gal">${rows.map(c=>{
     const ini=((c.name||"").replace(/[^A-Za-z0-9]/g,"").slice(0,1)||"◆").toUpperCase();
     const img=c.img?`<img src="${c.img}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ph',textContent:'${ini}'}))">`:`<div class="ph">${ini}</div>`;
     return `<div class="gcard ${c===best?'best':''}">
-      <div class="gthumb">${img}<div class="gbadges"><span class="st ${c.status==='ACTIVE'?'on':'off'}">${c.status==='ACTIVE'?'ativo':'pausado'}</span>${c===best?'<span class="star">★</span>':''}</div></div>
-      <div class="gbody"><div class="gname">${c.name}</div><div class="gcity">${c.product}${c.cname?' · '+c.cname:''}</div>
+      <${c.link?`a class="gthumb" href="${qa(c.link)}" target="_blank" rel="noopener" title="Ver anúncio"`:'div class="gthumb"'}>${img}<div class="gbadges"><span class="st ${c.status==='ACTIVE'?'on':'off'}">${c.status==='ACTIVE'?'ativo':'pausado'}</span>${c===best?'<span class="star">★</span>':''}</div></${c.link?"a":"div"}>
+      <div class="gbody"><div class="gname">${c.name}</div><div class="gcity">${c.product}${c.cname?' · '+c.cname:''}</div>${adLink(c)}
         <div class="gmet"><div class="gm"><div class="gk">Gasto</div><div class="gv">${BRL0(c.spend)}</div></div><div class="gm"><div class="gk">Leads</div><div class="gv">${NUM(c.le||0)}</div></div><div class="gm"><div class="gk">Lead Quali</div><div class="gv">${NUM(c.ql||0)}</div></div><div class="gm"><div class="gk">CTR</div><div class="gv">${PCT(c.ctr)}</div></div></div>
       </div></div>`;
   }).join("")}</div>`;
@@ -713,7 +720,7 @@ function renderHier(cs){
     let nameCell;
     if(lvl==="campaign") nameCell=`<div class="cfull">${r.name}</div><span class="tag">${r.product}</span>`;
     else if(lvl==="adset") nameCell=`<div class="cfull">${r.name}</div><span class="tag">${r.product}${r.cname?" · "+r.cname:""}</span>`;
-    else nameCell=`<div class="crn">${r===best?'<span class="star">★</span>':""}${r.name}</div><span class="tag">${(ADMAP[r.adset_id]||"—")} · ${r.cname||""}</span>`;
+    else nameCell=`<div class="crn">${r===best?'<span class="star">★</span>':""}${r.name}</div><span class="tag">${(ADMAP[r.adset_id]||"—")} · ${r.cname||""}</span>${adLink(r)}`;
     return `<tr class="${r===best?"best":""}">
       <td>${nameCell}</td>
       <td><span class="bk">${BKL[r.bucket]}</span></td>
