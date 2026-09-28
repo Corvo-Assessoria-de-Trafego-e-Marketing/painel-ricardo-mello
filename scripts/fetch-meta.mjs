@@ -135,25 +135,37 @@ function dateChunks(since, until, days = 30) {
   return chunks;
 }
 
-/* link "Ver anúncio" de cada criativo: a pré-visualização compartilhável da Meta
-   (abre sem login, com vídeo/imagem e copy — vale também para anúncio que não
-   existe como post no perfil). Sem ela, cai no post do Facebook. Pedido à parte
-   e protegido: se a Meta recusar, o painel segue igual, só sem o botão. */
+/* link "Ver anúncio" de cada criativo, nesta ordem:
+   1. o post no Instagram (o mesmo "ver publicação no Instagram" do Gerenciador);
+   2. a pré-visualização compartilhável da Meta (abre sem login, com vídeo/imagem
+      e copy — cobre anúncio só de Facebook);
+   3. o post no Facebook.
+   Pedido à parte e protegido: se a Meta recusar o campo do Instagram, tenta sem
+   ele; se recusar tudo, o painel segue igual, só sem o botão. */
 async function linksDosAnuncios(adIds) {
   const out = {};
+  const CAMPOS = [
+    "preview_shareable_link,creative{effective_object_story_id,instagram_permalink_url}",
+    "preview_shareable_link,creative{effective_object_story_id}",
+  ];
   for (let i = 0; i < adIds.length; i += 50) {
     const ids = adIds.slice(i, i + 50).join(",");
-    try {
-      const j = await (await fetch(`${API}/?ids=${ids}&fields=preview_shareable_link,creative{effective_object_story_id}&access_token=${TOKEN}`)).json();
-      if (j.error) throw new Error(j.error.message);
-      for (const [id, a] of Object.entries(j)) {
-        const post = a.creative?.effective_object_story_id;
-        const link = a.preview_shareable_link || (post ? `https://www.facebook.com/${post}` : null);
-        if (link) out[id] = link;
-      }
-    } catch (e) {
-      console.warn(`    aviso: links dos anúncios não vieram (${e.message}) — painel segue sem o botão`);
+    let erro = null;
+    for (const fields of CAMPOS) {
+      try {
+        const j = await (await fetch(`${API}/?ids=${ids}&fields=${fields}&access_token=${TOKEN}`)).json();
+        if (j.error) throw new Error(j.error.message);
+        for (const [id, a] of Object.entries(j)) {
+          const post = a.creative?.effective_object_story_id;
+          const link = a.creative?.instagram_permalink_url || a.preview_shareable_link
+            || (post ? `https://www.facebook.com/${post}` : null);
+          if (link) out[id] = link;
+        }
+        erro = null;
+        break;
+      } catch (e) { erro = e; }
     }
+    if (erro) console.warn(`    aviso: links dos anúncios não vieram (${erro.message}) — painel segue sem o botão`);
   }
   return out;
 }
