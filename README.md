@@ -52,3 +52,19 @@ O job puxa a Meta, reescreve `data.json` e faz commit — o Pages republica sozi
 
 ## Próxima etapa
 Integrar **RD Station** (venda faturada + conversas de WhatsApp) e habilitar **taxa de conexão** (evento LPV no pixel).
+
+---
+
+## Aba CRM / Comercial (leads por etapa do CRM)
+
+Lê o `crm.json`, gerado a partir da exportação de cadastros do CRM. **Não** atualiza de hora em hora: muda quando uma nova exportação é importada.
+
+Para atualizar:
+
+```bash
+node scripts/import-crm.mjs caminho/para/cadastros-AAAA-MM-DD.csv
+git add crm.json && git commit -m "crm: exportação AAAA-MM-DD" && git push
+```
+
+O script tira os cadastros de teste da equipe e os descartados, junta quem preencheu mais de uma vez (vale a etapa mais recente no CRM) e **não leva o telefone** para o painel (só nome e e-mail).
+A ordem das etapas fica em `CRM_STAGES` no `index.html`; etapa nova que aparecer na exportação entra sozinha antes de "Vendido".
