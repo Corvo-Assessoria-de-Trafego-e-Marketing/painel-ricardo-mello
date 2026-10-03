@@ -999,7 +999,7 @@ function renderExec(){
 /* ===================== fim do bloco Resumo executivo ===================== */
 /* ===================== aba CRM / Comercial — lê crm.json (exportação do CRM, ver scripts/import-crm.mjs) ===================== */
 let CRM=null;
-const crm={resp:"all",q:"all",stage:null,search:"",from:null,to:null,by:"camp",limit:100};
+const crm={resp:"all",q:"all",stage:null,search:"",from:null,to:null,by:"camp",costBy:"camp",limit:100};
 const CRM_STAGES=[
   {k:"🔥LEADS NOVOS",g:"Entrada"},
   {k:"📲 TENTATIVA DE CONTATO",g:"Contato"},
@@ -1028,6 +1028,52 @@ function crmBase(){ // filtros de responsável, qualificação e período (sem a
   return CRM.leads.filter(l=>(crm.resp==="all"||(l.resp||"—")===crm.resp)
     &&(crm.q==="all"||(crm.q==="s"&&l.quali==="sim")||(crm.q==="n"&&l.quali==="não")||(crm.q==="x"&&!l.quali))
     &&(!crm.from||l.d.slice(0,10)>=crm.from)&&(!crm.to||l.d.slice(0,10)<=crm.to));
+}
+/* Custo por etapa: parte dos leads COM UTM e busca, no data.json (Meta), quanto a campanha /
+   conjunto / anúncio de onde eles vieram investiu no mesmo período do cadastro.
+   UTMs da Exponential: utm_term = campanha · utm_medium = conjunto · utm_content = anúncio.
+   Conjunto e anúncio são sempre os DAQUELA campanha (o mesmo nome de conjunto existe em mais de
+   uma campanha). Anúncio renomeado depois do cadastro (UTM "AD-03-VD" × Meta "AD-03-VD-PLANILHA")
+   casa por prefixo único dentro do mesmo conjunto e é marcado com ≈.
+   Usa só o período: o investimento não se divide por responsável nem por qualificação. */
+function crmCost(level){
+  const nm=s=>String(s||"").trim().toLowerCase();
+  const from=crm.from,to=crm.to;
+  const leads=CRM.leads.filter(l=>l.term&&l.d&&(!from||l.d.slice(0,10)>=from)&&(!to||l.d.slice(0,10)<=to));
+  const campsByName={};for(const c of DATA.campaigns)(campsByName[nm(c.name)]||=[]).push(c.id);
+  const asName=Object.fromEntries(DATA.adsets.map(a=>[a.id,nm(a.name)]));
+  const adName=Object.fromEntries(DATA.ads.map(a=>[a.id,nm(a.name)]));
+  // gasto do período por campanha / campanha+conjunto / anúncio
+  const sp={c:{},as:{},ad:{}};
+  for(const r of DATA.daily){ if(r.d<from||r.d>to)continue;
+    sp.c[r.c]=(sp.c[r.c]||0)+r.s; const ka=r.c+"|"+r.as; sp.as[ka]=(sp.as[ka]||0)+r.s; sp.ad[r.a]=(sp.ad[r.a]||0)+r.s; }
+  const adsIn=(cids,asNm)=>DATA.ads.filter(a=>cids.includes(a.campaign_id)&&asName[a.adset_id]===asNm);
+  const groups={},semInv=[];
+  for(const l of leads){
+    const cids=campsByName[nm(l.term)]||[];
+    if(!cids.length){semInv.push(l);continue;}
+    let key,label,sub="";
+    if(level==="camp"){key=nm(l.term);label=l.term;}
+    else if(level==="adset"){key=nm(l.term)+"|"+nm(l.med);label=l.med||"(sem conjunto na UTM)";sub=l.term;}
+    else {key=nm(l.term)+"|"+nm(l.med)+"|"+nm(l.cont);label=l.cont||"(sem anúncio na UTM)";sub=(l.med||"")+" · "+l.term;}
+    const g=groups[key]||(groups[key]={label,sub,cids,med:nm(l.med),cont:nm(l.cont),n:0,q:0,a:0,w:0});
+    g.n++;if(l.quali==="sim")g.q++;if(ADV.has(l.etapa))g.a++;if(l.etapa==="🟢VENDIDO")g.w++;
+  }
+  for(const g of Object.values(groups)){
+    if(level==="camp") g.s=g.cids.reduce((t,c)=>t+(sp.c[c]||0),0);
+    else if(level==="adset") g.s=Object.entries(sp.as).filter(([k])=>{const [c,as]=k.split("|");return g.cids.includes(c)&&asName[as]===g.med;}).reduce((t,[,v])=>t+v,0);
+    else {
+      let ads=adsIn(g.cids,g.med).filter(a=>adName[a.id]===g.cont);
+      if(!ads.length&&g.cont){ // anúncio renomeado: prefixo único dentro do conjunto
+        const cand=adsIn(g.cids,g.med).filter(a=>adName[a.id].startsWith(g.cont)||g.cont.startsWith(adName[a.id]));
+        const nomes=new Set(cand.map(a=>adName[a.id]));
+        if(nomes.size===1){ads=cand;g.aprox=cand[0].name;}
+      }
+      g.s=ads.reduce((t,a)=>t+(sp.ad[a.id]||0),0); g.semMatch=!ads.length;
+    }
+  }
+  const semUtm=CRM.leads.filter(l=>!l.term&&l.d&&(!from||l.d.slice(0,10)>=from)&&(!to||l.d.slice(0,10)<=to)).length;
+  return {rows:Object.values(groups).sort((a,b)=>b.n-a.n),semInv,semUtm};
 }
 function renderCRM(){
   if(!CRM){document.getElementById("app").innerHTML=`<div class="controls"><div class="seg" id="seg" role="tablist" aria-label="Ação"></div></div><div class="err"><b>Ainda não há exportação do CRM neste painel.</b> Gere o crm.json com scripts/import-crm.mjs a partir do CSV de cadastros.</div>`;renderSeg();return;}
@@ -1059,6 +1105,22 @@ function renderCRM(){
   const exp=new Date(M.exported_at),expL=isNaN(exp)?M.source:exp.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
   const qBadge=v=>v==="sim"?`<span class="crm-q s">qualificado</span>`:v==="não"?`<span class="crm-q n">não qualificado</span>`:`<span class="crm-q x">antes da regra</span>`;
   const dmin=M.first_date.slice(0,10),dmax=M.last_date.slice(0,10);
+  // tabela de custo por etapa (investimento da Meta × etapas do CRM)
+  const CT=crmCost(crm.costBy),cu=(s,n)=>n>0&&s>0?BRL(s/n):"—";
+  const ctTot=CT.rows.reduce((t,g)=>(t.s+=g.s,t.n+=g.n,t.q+=g.q,t.a+=g.a,t.w+=g.w,t),{s:0,n:0,q:0,a:0,w:0});
+  const CTL={camp:"Campanha",adset:"Conjunto",ad:"Anúncio"};
+  const semInvSrc=[...new Set(CT.semInv.map(l=>l.term))];
+  const costTable=`
+    <div class="tblwrap">
+      <div class="tblhead" style="justify-content:space-between;align-items:center"><div><h3 style="display:inline">Quanto custou cada etapa</h3><span class="sub">&nbsp; leads com UTM × o que ${{camp:"a campanha",adset:"o conjunto",ad:"o anúncio"}[crm.costBy]} de onde vieram investiu no mesmo período (Meta). Usa só a data do cadastro — investimento não se divide por responsável nem qualificação</span></div>
+        <div class="miniseg" id="crmCostBy">${Object.entries(CTL).map(([k,l])=>`<button type="button" data-b="${k}" aria-selected="${crm.costBy===k}">${l}</button>`).join("")}</div></div>
+      <div class="scroll"><table class="crm-tbl"><thead><tr><th>${CTL[crm.costBy]}</th><th>Investido</th><th>Leads</th><th>Custo/lead</th><th>Qualificados</th><th>Custo/qualif.</th><th>Avançaram</th><th>Custo/avanço</th><th>Vendidos</th><th>Custo/venda</th></tr></thead><tbody>
+      ${CT.rows.map(g=>`<tr><td>${esc(g.label)}${g.aprox?` <span class="mail" title="o anúncio foi renomeado no Meta depois do cadastro">≈ ${esc(g.aprox)}</span>`:""}${g.semMatch?` <span class="mail">anúncio não encontrado no Meta</span>`:""}${g.sub?`<span class="mail">${esc(g.sub)}</span>`:""}</td>
+        <td><b>${g.s>0?BRL(g.s):"—"}</b></td><td>${NUM(g.n)}</td><td><b>${cu(g.s,g.n)}</b></td><td>${NUM(g.q)}</td><td>${cu(g.s,g.q)}</td><td>${NUM(g.a)}</td><td>${cu(g.s,g.a)}</td><td>${NUM(g.w)}</td><td>${cu(g.s,g.w)}</td></tr>`).join("")||`<tr><td colspan="10" style="text-align:center;color:var(--muted)">Nenhum lead com UTM de campanha neste período.</td></tr>`}
+      ${CT.rows.length>1?`<tr><td><b>Total</b></td><td><b>${BRL(ctTot.s)}</b></td><td><b>${NUM(ctTot.n)}</b></td><td><b>${cu(ctTot.s,ctTot.n)}</b></td><td><b>${NUM(ctTot.q)}</b></td><td><b>${cu(ctTot.s,ctTot.q)}</b></td><td><b>${NUM(ctTot.a)}</b></td><td><b>${cu(ctTot.s,ctTot.a)}</b></td><td><b>${NUM(ctTot.w)}</b></td><td><b>${cu(ctTot.s,ctTot.w)}</b></td></tr>`:""}
+      </tbody></table></div>
+      <div class="psub" style="padding:10px 20px 14px">Fora desta tabela: ${NUM(CT.semUtm)} ${CT.semUtm===1?"lead":"leads"} sem UTM (não dá para saber de onde vieram)${CT.semInv.length?` e ${NUM(CT.semInv.length)} com UTM que não é campanha do Meta (${esc(semInvSrc.join(", "))})`:""}. Campanha que investiu e não trouxe lead não aparece aqui — está nas outras abas.${crm.costBy!=="camp"?` Por ${CTL[crm.costBy].toLowerCase()}, o total fica abaixo do de campanha: ${crm.costBy==="ad"?"anúncio":"conjunto"} que gastou sem trazer lead não entra.`:""} Em períodos curtos o custo pode distorcer: o lead pode se cadastrar dias depois do clique que foi pago.</div>
+    </div>`;
 
   document.getElementById("app").innerHTML=`
     <div class="controls"><div class="seg" id="seg" role="tablist" aria-label="Ação"></div></div>
@@ -1097,6 +1159,7 @@ function renderCRM(){
       ${orows.map(([k,g])=>`<tr><td>${esc(k)}</td><td><b>${NUM(g.n)}</b></td><td>${NUM(g.q)}</td><td>${pc(g.q,g.n)}</td><td>${NUM(g.a)}</td><td>${pc(g.a,g.n)}</td><td>${NUM(g.w)}</td><td>${NUM(g.p)}</td></tr>`).join("")}
       </tbody></table></div>
     </div>
+    ${costTable}
     <div class="tblwrap">
       <div class="tblhead" style="justify-content:space-between;align-items:center">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><h3>Lista de leads</h3><span class="sub">${NUM(list.length)} ${list.length===1?"lead":"leads"} · mais recentes primeiro</span>
@@ -1118,6 +1181,7 @@ function renderCRM(){
   $("crmResp").value=crm.resp;$("crmResp").onchange=e=>{crm.resp=e.target.value;crm.limit=100;renderCRM();};
   $("crmQ").querySelectorAll("button").forEach(b=>b.onclick=()=>{crm.q=b.dataset.q;crm.limit=100;renderCRM();});
   $("crmBy").querySelectorAll("button").forEach(b=>b.onclick=()=>{crm.by=b.dataset.b;renderCRM();});
+  $("crmCostBy").querySelectorAll("button").forEach(b=>b.onclick=()=>{crm.costBy=b.dataset.b;renderCRM();});
   $("crmFrom").onchange=$("crmTo").onchange=()=>{crm.from=$("crmFrom").value||dmin;crm.to=$("crmTo").value||dmax;crm.limit=100;renderCRM();};
   document.querySelectorAll(".crm-st").forEach(b=>b.onclick=()=>{const k=b.dataset.k;crm.stage=crm.stage===k?null:k;crm.limit=100;renderCRM();});
   if($("crmClr"))$("crmClr").onclick=()=>{crm.stage=null;renderCRM();};
