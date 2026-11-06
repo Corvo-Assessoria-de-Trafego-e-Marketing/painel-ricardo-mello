@@ -1,14 +1,17 @@
 # Painel Ricardo Mello · Exponential
 
-Dashboard estático de performance (Meta Ads) que **se atualiza sozinho de hora em hora**.
+Dashboard estático de performance (Meta Ads + RD Station) que **se atualiza sozinho de hora em hora**.
 
 ```
-index.html   →  lê  →  data.json        (GitHub Pages serve os dois)
-                        ▲
-                        │ commit automático a cada hora
+index.html   →  lê  →  data.json  (Meta)   +   rd.json  (RD Station, sem dados pessoais)
+                        ▲                         ▲
+                        │ commit automático a cada hora (mesmo workflow)
               .github/workflows/update-data.yml
-                        │
-              scripts/fetch-meta.mjs  →  Meta Marketing API
+                        │                         │
+              scripts/fetch-meta.mjs       scripts/fetch-rd.mjs  →  API da RD Station Marketing
+                                                  │
+                                                  └→ ramo rd-dados: leads.enc (nome, e-mail, empresa,
+                                                     criptografados com a senha do painel) e state.enc
 ```
 
 O HTML é 100% estático — nenhum servidor, nenhuma chave exposta no navegador. Quem chama a Meta é o **GitHub Actions** (nos bastidores), usando um token guardado como *secret*.
@@ -43,7 +46,7 @@ Em ~1 min o painel fica no ar em `https://<seu-usuario>.github.io/<repo>/`.
 ## Rodar a atualização agora (sem esperar a hora cheia)
 
 **Actions → Atualizar dados Meta Ads → Run workflow.**
-O job puxa a Meta, reescreve `data.json` e faz commit — o Pages republica sozinho.
+O job puxa a Meta e a RD, reescreve `data.json` e `rd.json` e faz commit — o Pages republica sozinho.
 
 ## Ajustes rápidos
 - **Frequência:** edite o `cron` em `.github/workflows/update-data.yml` (`0 * * * *` = de hora em hora; `0 */6 * * *` = a cada 6h).
@@ -51,20 +54,29 @@ O job puxa a Meta, reescreve `data.json` e faz commit — o Pages republica sozi
 - **Visual / lógica de objetivo:** tudo em `index.html` (função `classify`).
 
 ## Próxima etapa
-Integrar **RD Station** (venda faturada + conversas de WhatsApp) e habilitar **taxa de conexão** (evento LPV no pixel).
+Tempo até o primeiro contato e tempo parado em cada etapa: dependem de um token da **API do RD Station CRM** (a API do Marketing só mostra a etapa atual).
 
 ---
 
-## Aba CRM / Comercial (leads por etapa do CRM)
+## RD Station: aba CRM / Comercial e jornada do lead (desde 06/11/2026)
 
-Lê o `crm.json`, gerado a partir da exportação de cadastros do CRM. **Não** atualiza de hora em hora: muda quando uma nova exportação é importada.
+`scripts/fetch-rd.mjs` roda no mesmo workflow, logo depois da Meta. Ele usa o app OAuth "App RD Corvo - Integração Exponencial" e:
 
-Para atualizar:
+- lê os contatos com conversão nova desde a última rodada (conversões, UTMs e campos do cadastro);
+- relê a etapa, o dono, o valor e o motivo de perda do RD CRM (gravados no contato como `cf_plug_*`), cerca de 300 contatos por rodada, começando pelos recentes e pelos que ainda estão em aberto;
+- grava `rd.json` no main, **sem nome, e-mail, telefone ou empresa**;
+- grava no ramo `rd-dados` (um commit só, sobrescrito a cada rodada): `leads.enc`, com nome, e-mail e empresa criptografados com a senha do painel, e `state.enc`, o estado da sincronização criptografado com `RD_STATE_KEY`.
 
-```bash
-node scripts/import-crm.mjs caminho/para/cadastros-AAAA-MM-DD.csv
-git add crm.json && git commit -m "crm: exportação AAAA-MM-DD" && git push
-```
+A lista de leads da aba CRM só mostra nome e e-mail depois que a pessoa digita a senha (o navegador baixa o `leads.enc` e abre com a senha). Telefone não entra no painel.
 
-O script tira os cadastros de teste da equipe e os descartados, junta quem preencheu mais de uma vez (vale a etapa mais recente no CRM) e **não leva o telefone** para o painel (só nome e e-mail).
-A ordem das etapas fica em `CRM_STAGES` no `index.html`; etapa nova que aparecer na exportação entra sozinha antes de "Vendido".
+**Secrets do repositório:** `RD_CLIENT_ID`, `RD_CLIENT_SECRET`, `RD_REFRESH_TOKEN`, `RD_STATE_KEY` (32 bytes em base64) e `PAINEL_SENHA`. Os valores ficam também no `corvo-infra.env` da Corvo.
+
+**Trocar a senha do painel:** mude o secret `PAINEL_SENHA` (e o `corvo-infra.env`). A próxima rodada recriptografa o `leads.enc`; quem tinha a senha antiga salva no aparelho precisa digitar a nova.
+
+**Funil de cada lead:** vem do identificador da conversão (`diagnostico-dre` = Planilha DRE, `dre-inteligente*` = DRE Inteligente, `imersao*` = Imersão, `diag*` = Diagnóstico). Na Meta, o mesmo funil vem do nome da campanha (`classify` no `index.html`). O filtro "Funil / oferta" do painel usa os dois.
+
+**Cadastros de teste** (e-mails internos, UTMs de teste) ficam fora pela lista `TEST` em `scripts/fetch-rd.mjs`.
+
+A ordem das etapas fica em `CRM_STAGES` no `index.html`; etapa nova que aparecer no CRM entra sozinha antes de "Vendido".
+
+O antigo `crm.json` (exportação manual em CSV, com nome e e-mail abertos) foi removido do repositório e do histórico em 06/11/2026.

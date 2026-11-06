@@ -38,6 +38,13 @@ jobs:
         env:
           META_TOKEN: ${{ secrets.META_TOKEN }}
           AD_ACCOUNT_ID: ${{ secrets.AD_ACCOUNT_ID }}
+          # RD Station (app OAuth da Corvo). Ver scripts/fetch-rd.mjs
+          RD_CLIENT_ID: ${{ secrets.RD_CLIENT_ID }}
+          RD_CLIENT_SECRET: ${{ secrets.RD_CLIENT_SECRET }}
+          RD_REFRESH_TOKEN: ${{ secrets.RD_REFRESH_TOKEN }}
+          RD_STATE_KEY: ${{ secrets.RD_STATE_KEY }}
+          PAINEL_SENHA: ${{ secrets.PAINEL_SENHA }}
+          RD_DIR: ${{ runner.temp }}/rd-dados
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -48,9 +55,23 @@ jobs:
             # fetch NAO-fatal: se a API da Meta falhar/limitar nesta iteracao,
             # o job continua (nao entra em loop apertado de re-disparo).
             node scripts/fetch-meta.mjs || echo "AVISO: fetch-meta falhou nesta iteracao (segue)"
-            git add data.json thumbs 2>/dev/null || git add data.json
+            # RD: o estado da sincronizacao e a lista criptografada (nome/e-mail) ficam no ramo
+            # rd-dados, num commit unico sobrescrito a cada rodada (nao cresce o historico do main).
+            # No main vai so o rd.json, sem dados pessoais.
+            rm -rf "$RD_DIR" && mkdir -p "$RD_DIR"
+            if git fetch -q origin rd-dados 2>/dev/null; then git show FETCH_HEAD:state.enc > "$RD_DIR/state.enc" 2>/dev/null || rm -f "$RD_DIR/state.enc"; fi
+            if node scripts/fetch-rd.mjs; then
+              B1=$(git hash-object -w "$RD_DIR/leads.enc"); B2=$(git hash-object -w "$RD_DIR/state.enc")
+              TREE=$(printf "100644 blob %s\tleads.enc\n100644 blob %s\tstate.enc\n" "$B1" "$B2" | git mktree)
+              RDC=$(git commit-tree "$TREE" -m "dados RD $(date -u '+%Y-%m-%d %H:%M UTC')")
+              git push -f -q origin "$RDC:refs/heads/rd-dados" || echo "AVISO: push do ramo rd-dados falhou"
+            else
+              echo "AVISO: fetch-rd falhou nesta iteracao (segue)"
+              git checkout -- rd.json 2>/dev/null || true
+            fi
+            git add data.json rd.json thumbs 2>/dev/null || git add data.json rd.json
             if [ -n "$(git status --porcelain)" ]; then
-              git commit -q -m "chore: atualiza data.json + capas ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+              git commit -q -m "chore: atualiza data.json, rd.json + capas ($(date -u '+%Y-%m-%d %H:%M UTC'))"
               git push -q || echo "AVISO: push falhou (proxima iteracao reseta e tenta de novo)"
             else
               echo "Sem mudanca nos dados."
